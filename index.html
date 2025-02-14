@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Farm Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Load Chart.js -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        .container {
+            width: 80%;
+            margin: auto;
+        }
+        canvas {
+            max-width: 100%;
+        }
+        .info-box {
+            margin: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            display: inline-block;
+            min-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Smart Farm Dashboard</h1>
+
+    <div class="container">
+        <canvas id="airHumidityChart"></canvas>
+        <canvas id="soilHumidityChart"></canvas>
+    </div>
+
+    <div class="info-box">
+        <h2>Brightness</h2>
+        <p id="brightnessValue">--</p>
+    </div>
+
+    <div class="info-box">
+        <h2>Water Level</h2>
+        <p id="waterLevel">--</p>
+    </div>
+
+    <div class="info-box">
+        <h2>Current Time & Date</h2>
+        <p id="currentTime">--</p>
+    </div>
+
+    <script>
+        async function fetchSensorData() {
+            try {
+                const response = await fetch("/sensor-data");
+                const data = await response.json();
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    console.warn("No sensor data received");
+                    return;
+                }
+
+                console.log("Sensor Data:", data);
+
+                const labels = data.map(d => d.time);
+                const airHumidity = data.map(d => d.air_humidity);
+                const soilHumidity = data.map(d => d.soil_humidity);
+                const brightness = data[0].brightness;
+                const waterLevel = data[0].water_level || "--";
+                
+                document.getElementById("brightnessValue").textContent = brightness + "%";
+                document.getElementById("waterLevel").textContent = waterLevel + "%";
+                document.getElementById("currentTime").textContent = new Date().toLocaleString();
+
+                const airCtx = document.getElementById("airHumidityChart").getContext("2d");
+                new Chart(airCtx, {
+                    type: "line",
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: "Air Humidity",
+                            data: airHumidity,
+                            borderColor: "blue",
+                            fill: false
+                        }]
+                    }
+                });
+
+                const soilCtx = document.getElementById("soilHumidityChart").getContext("2d");
+                new Chart(soilCtx, {
+                    type: "line",
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: "Soil Humidity",
+                            data: soilHumidity,
+                            borderColor: "green",
+                            fill: false
+                        }]
+                    }
+                });
+            } catch (error) {
+                console.error("Error fetching sensor data:", error);
+            }
+        }
+
+        fetchSensorData();
+        setInterval(fetchSensorData, 10000); // Refresh every 10 seconds
+    </script>
+</body>
+</html>
