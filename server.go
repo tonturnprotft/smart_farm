@@ -1,88 +1,146 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	//"strconv"
+	//"os"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
+	"github.com/tarm/serial"
 )
 
+// ✅ PostgreSQL Connection
 const dbConn = "user=postgres password=4847 dbname=farm_db sslmode=disable"
 
 var db *sql.DB
 
+// ✅ Sensor Data Structure
 type SensorData struct {
-	ID           int     `json:"id"`
-	Date         string  `json:"date"`
-	Time         string  `json:"time"`
-	AirHumidity  float64 `json:"air_humidity"`
-	SoilHumidity float64 `json:"soil_humidity"`
-	Brightness   int     `json:"brightness"`
+	Temperature  float64 `json:"temperature"`
+	AirHumidity  float64 `json:"humidity"`
+	SoilMoisture float64 `json:"soil_moisture"`
+	Brightness   float64 `json:"brightness"`
+}
+// ✅ MQTT Message Handler - Store in Database
+func mqttMessageHandler(client mqtt.Client, msg mqtt.Message) {
+	var data SensorData
+
+	fmt.Println("📡 Incoming MQTT Data:", string(msg.Payload()))
+
+	err := json.Unmarshal(msg.Payload(), &data)
+	if err != nil {
+		fmt.Println("❌ Error decoding MQTT message:", err)
+		return
+	}
+
+	fmt.Println("📡 Parsed Sensor Data:", data)
+
+	// ✅ Fix: Insert `Temperature` into the `temp` column
+	_, err = db.Exec(`INSERT INTO sensor (date, time, temp, air_humidity, soil_humidity, brightness)
+		VALUES (CURRENT_DATE, CURRENT_TIME, $1, $2, $3, 50)`, data.Temperature, data.AirHumidity, data.SoilMoisture)
+
+	if err != nil {
+		fmt.Println("❌ Error storing data in DB:", err)
+	} else {
+		fmt.Println("✅ Data stored successfully in PostgreSQL")
+	}
+}
+// ✅ Send Data to MQTT Broker
+func publishToMQTT(data SensorData) {
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker("tcp://localhost:1883")
+
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	token.Wait()
+
+	if token.Error() != nil {
+		fmt.Println("❌ MQTT Connection Failed:", token.Error())
+		return
+	}
+
+	jsonData, _ := json.Marshal(data)
+	token = client.Publish("smartfarm/sensors", 0, false, jsonData)
+	token.Wait()
+	if token.Error() != nil {
+		fmt.Println("❌ Error sending MQTT message:", token.Error())
+	} else {
+		fmt.Println("✅ Data Sent to MQTT:", string(jsonData))
+	}
 }
 
-// ✅ API to Fetch Sensor Data
-func fetchSensorData(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query(`SELECT id, date, time, air_humidity, soil_humidity, brightness FROM sensor ORDER BY id DESC LIMIT 10`)
+// ✅ Read from Serial & Store in DB
+func readSerial() {
+	config := &serial.Config{Name: "/dev/tty.usbmodem11201", Baud: 115200} // 🔹 Adjust for Mac
+	port, err := serial.OpenPort(config)
 	if err != nil {
-		http.Error(w, "Failed to retrieve data", http.StatusInternalServerError)
+		log.Fatal("❌ Error opening serial port:", err)
+	}
+	defer port.Close()
+
+	reader := bufio.NewReader(port)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("❌ Error reading from serial:", err)
+			continue
+		}
+
+		var data SensorData
+		err = json.Unmarshal([]byte(line), &data)
+		if err != nil {
+			fmt.Println("❌ JSON Parsing Error:", err)
+			continue
+		}
+
+		// ✅ Fix: Insert `Temperature` into the `temp` column
+		_, err = db.Exec(`INSERT INTO sensor (date, time, temp, air_humidity, soil_humidity, brightness)
+			VALUES (CURRENT_DATE, CURRENT_TIME, $1, $2, $3, 50)`, data.Temperature, data.AirHumidity, data.SoilMoisture)
+
+		if err != nil {
+			fmt.Println("❌ Error storing data in DB:", err)
+		} else {
+			fmt.Println("✅ Sensor Data Stored:", data)
+		}
+
+		// ✅ Send to MQTT
+		publishToMQTT(data)
+	}
+}
+
+// ✅ Start Web API
+func fetchSensorData(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT temp, air_humidity, soil_humidity, brightness FROM sensor ORDER BY id DESC LIMIT 1`)
+	if err != nil {
+		http.Error(w, "❌ Failed to retrieve data", http.StatusInternalServerError)
+		fmt.Println("❌ SQL Query Error:", err)
 		return
 	}
 	defer rows.Close()
 
-	var sensorData []SensorData
-	for rows.Next() {
-		var data SensorData
-		err := rows.Scan(&data.ID, &data.Date, &data.Time, &data.AirHumidity, &data.SoilHumidity, &data.Brightness)
+	var data SensorData
+	if rows.Next() {
+		err := rows.Scan(&data.Temperature, &data.AirHumidity, &data.SoilMoisture, &data.Brightness)
 		if err != nil {
-			http.Error(w, "Error scanning data", http.StatusInternalServerError)
+			http.Error(w, "❌ Error scanning data", http.StatusInternalServerError)
+			fmt.Println("❌ Error scanning row:", err)
 			return
 		}
-		sensorData = append(sensorData, data)
+	} else {
+		http.Error(w, "❌ No data found", http.StatusNotFound)
+		fmt.Println("❌ No data found in database")
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sensorData)
-}
-
-// ✅ API to Update Brightness
-func setBrightness(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Only POST method allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var requestData struct {
-		Brightness int `json:"brightness"`
-	}
-	err := json.NewDecoder(r.Body).Decode(&requestData)
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Validate range
-	if requestData.Brightness < 0 || requestData.Brightness > 100 {
-		http.Error(w, "Brightness must be between 0 and 100", http.StatusBadRequest)
-		return
-	}
-
-	// Update database
-	_, err = db.Exec(`UPDATE sensor SET brightness = $1 WHERE id = (SELECT MAX(id) FROM sensor)`, requestData.Brightness)
-	if err != nil {
-		http.Error(w, "Failed to update brightness", http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprintf(w, "Brightness updated to %d%%", requestData.Brightness)
+	json.NewEncoder(w).Encode(data)
+	fmt.Println("✅ Sent Sensor Data:", data)
 }
 
 // ✅ Serve HTML Dashboard
@@ -90,53 +148,22 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "index.html")
 }
 
-// ✅ GUI Application for Brightness Control
-func createGUI() {
-	a := app.New()
-	w := a.NewWindow("Smart Farm GUI")
-
-	// Brightness slider
-	slider := widget.NewSlider(0, 100)
-	slider.SetValue(50)
-	slider.OnChanged = func(value float64) {
-		fmt.Printf("Brightness set to: %d%%\n", int(value))
-
-		// Send request to update brightness
-		go func() {
-			_, err := http.Post(fmt.Sprintf("http://localhost:8080/set-brightness?value=%d", int(value)), "application/json", nil)
-			if err != nil {
-				log.Println("Failed to update brightness:", err)
-			}
-		}()
-	}
-
-	w.SetContent(container.NewVBox(
-		widget.NewLabel("Adjust Brightness:"),
-		slider,
-	))
-
-	w.Resize(fyne.NewSize(300, 200))
-	w.ShowAndRun()
-}
-
 func main() {
 	var err error
 	db, err = sql.Open("postgres", dbConn)
 	if err != nil {
-		log.Fatal("Database connection error:", err)
+		log.Fatal("❌ Database connection error:", err)
 	}
 	defer db.Close()
 
+	// ✅ Start Serial Reader
+	go readSerial()
+
+	// ✅ Start Web Server
 	router := mux.NewRouter()
-	router.HandleFunc("/", serveHTML) // ✅ Serve HTML
-	router.HandleFunc("/sensor-data", fetchSensorData).Methods("GET") // ✅ Fetch Data
-	router.HandleFunc("/set-brightness", setBrightness).Methods("POST") // ✅ Set Brightness
+	router.HandleFunc("/", serveHTML)               // ✅ Serve HTML
+	router.HandleFunc("/sensor-data", fetchSensorData).Methods("GET") // ✅ Provide Data for Dashboard
 
-	go func() {
-		fmt.Println("Server running on http://localhost:8080")
-		log.Fatal(http.ListenAndServe(":8080", router))
-	}()
-
-	// Run GUI
-	createGUI()
+	fmt.Println("✅ Server running on http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", router))
 }

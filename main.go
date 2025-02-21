@@ -1,60 +1,60 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	//"strconv"
-
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
+	"machine"
+	"time"
+	"tinygo.org/x/drivers/dht"
 )
 
-var serverURL = "http://localhost:8080/update"
-
 type SensorData struct {
-	Brightness int `json:"brightness"`
-	WaterLevel int `json:"water_level"`
-}
-
-func sendData(brightness, waterLevel int) {
-	data := SensorData{Brightness: brightness, WaterLevel: waterLevel}
-	jsonData, _ := json.Marshal(data)
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println("Error sending data:", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	fmt.Println("Data sent successfully:", resp.Status)
+	Temperature  float64 `json:"temperature"`
+	Humidity     float64 `json:"humidity"`
+	SoilMoisture float64 `json:"soil_moisture"`
 }
 
 func main() {
-	a := app.New()
-	w := a.NewWindow("Smart Farm Control")
-	w.Resize(fyne.NewSize(400, 300))
+	fmt.Println("🚀 Smart Farm Sensors: Starting up...")
 
-	brightnessSlider := widget.NewSlider(0, 100)
-	waterLevelSlider := widget.NewSlider(0, 100)
+	// ✅ Initialize Sensors
+	time.Sleep(2 * time.Second)
+	dhtSensor := dht.New(machine.GP2, dht.DHT22)
+	machine.InitADC()
+	adc := machine.ADC{Pin: machine.GP27}
+	adc.Configure(machine.ADCConfig{})
 
-	brightnessSlider.OnChanged = func(value float64) {
-		sendData(int(value), int(waterLevelSlider.Value))
+	fmt.Println("✅ Sensors Initialized!")
+
+	for {
+		// ✅ Read Soil Moisture
+		soilRaw := adc.Get()
+		soilVoltage := float32(soilRaw) * 3.3 / 65535.0
+		soilMoisture := 100 - ((soilVoltage / 3.3) * 100)
+
+		// ✅ Read Temperature & Humidity
+		temp, hum, err := dhtSensor.Measurements()
+		if err != nil {
+			fmt.Println("❌ Error reading DHT22:", err)
+			continue
+		}
+
+		// ✅ Format Data as JSON
+		data := SensorData{
+			Temperature:  float64(temp) / 10.0,
+			Humidity:     float64(hum) / 10.0,
+			SoilMoisture: float64(soilMoisture),
+		}
+
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			fmt.Println("❌ JSON Encoding Error:", err)
+			continue
+		}
+
+		// ✅ Print Data to Serial (MacBook `server.go` will read this)
+		fmt.Println(string(jsonData))
+
+		time.Sleep(5 * time.Second)
 	}
-	waterLevelSlider.OnChanged = func(value float64) {
-		sendData(int(brightnessSlider.Value), int(value))
-	}
-
-	w.SetContent(container.NewVBox(
-		widget.NewLabel("Brightness Control"),
-		brightnessSlider,
-		widget.NewLabel("Water Level Control"),
-		waterLevelSlider,
-	))
-
-	w.ShowAndRun()
 }

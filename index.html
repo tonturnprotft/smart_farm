@@ -4,108 +4,160 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Farm Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Load Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- ✅ Load Chart.js -->
     <style>
         body {
             font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
             text-align: center;
         }
         .container {
-            width: 80%;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .box {
+            background-color: #222;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .large-box {
+            grid-column: span 3;
+        }
+        .chart-container {
+            width: 100%;
+            max-width: 600px;
             margin: auto;
         }
-        canvas {
-            max-width: 100%;
+        .slider-container {
+            margin-top: 20px;
         }
-        .info-box {
-            margin: 20px;
-            padding: 15px;
-            border: 1px solid #ccc;
-            display: inline-block;
-            min-width: 200px;
+        .slider {
+            width: 300px;
         }
     </style>
 </head>
 <body>
-    <h1>Smart Farm Dashboard</h1>
+    <h1>🌱 Smart Farm Dashboard</h1>
 
     <div class="container">
-        <canvas id="airHumidityChart"></canvas>
-        <canvas id="soilHumidityChart"></canvas>
+        <div class="box large-box">
+            <h2>DAY</h2>
+            <h1 id="day-count">0</h1>
+            <p id="datetime"></p>
+        </div>
+        <div class="box">
+            <h2>TEMPERATURE</h2>
+            <h1 id="temperature-display">--°C</h1>
+        </div>
+        <div class="box">
+            <h2>WATER-PUMP</h2>
+            <button onclick="togglePump()" id="pump-button">Toggle</button>
+            <p id="pump-status">OFF</p>
+        </div>
+        <div class="box">
+            <h2>AIR HUMIDITY</h2>
+            <h1 id="humidity-display">--%</h1>
+        </div>
+        <div class="box">
+            <h2>SOIL MOISTURE</h2>
+            <h1 id="soil-moisture-display">--%</h1>
+        </div>
+        <div class="box">
+            <h2>BRIGHTNESS</h2>
+            <h1 id="brightness-display">--%</h1>
+        </div>
     </div>
 
-    <div class="info-box">
-        <h2>Brightness</h2>
-        <p id="brightnessValue">--</p>
-    </div>
+    <!-- ✅ Charts Section -->
+    <h2>📊 Sensor Data Over Time</h2>
+    <div class="chart-container"><canvas id="airHumidityChart"></canvas></div>
+    <div class="chart-container"><canvas id="soilHumidityChart"></canvas></div>
+    <div class="chart-container"><canvas id="brightnessChart"></canvas></div>
 
-    <div class="info-box">
-        <h2>Water Level</h2>
-        <p id="waterLevel">--</p>
-    </div>
-
-    <div class="info-box">
-        <h2>Current Time & Date</h2>
-        <p id="currentTime">--</p>
+    <!-- ✅ Brightness Control Slider -->
+    <div class="slider-container">
+        <h2>💡 Set Brightness</h2>
+        <input type="range" id="brightness-slider" class="slider" min="0" max="100" value="50" oninput="updateBrightness(this.value)">
+        <p>Brightness: <span id="brightness-value">50%</span></p>
     </div>
 
     <script>
+        // ✅ Initialize Charts
+        const airHumidityChart = new Chart(document.getElementById("airHumidityChart"), {
+            type: "line",
+            data: { labels: [], datasets: [{ label: "Air Humidity (%)", data: [], borderColor: "blue", fill: false }] }
+        });
+
+        const soilHumidityChart = new Chart(document.getElementById("soilHumidityChart"), {
+            type: "line",
+            data: { labels: [], datasets: [{ label: "Soil Moisture (%)", data: [], borderColor: "green", fill: false }] }
+        });
+
+        const brightnessChart = new Chart(document.getElementById("brightnessChart"), {
+            type: "line",
+            data: { labels: [], datasets: [{ label: "Brightness (%)", data: [], borderColor: "orange", fill: false }] }
+        });
+
+        // ✅ Fetch Sensor Data from Server
         async function fetchSensorData() {
             try {
-                const response = await fetch("/sensor-data");
+                const response = await fetch(`/sensor-data?timestamp=${new Date().getTime()}`);
+                if (!response.ok){
+                    throw new Error(`HTTP error! Statis: ${response.status}`);
+                }
                 const data = await response.json();
-
-                if (!Array.isArray(data) || data.length === 0) {
-                    console.warn("No sensor data received");
-                    return;
+                console.log("📡 Fetched Sensor Data:", data);
+                if (data && data.temperature !== undefined) {
+                    document.getElementById("temperature-display").innerText = `${data.temperature.toFixed(1)}°C`;
+                    document.getElementById("humidity-display").innerText = `${data.humidity.toFixed(1)}%`;
+                    document.getElementById("soil-moisture-display").innerText = `${data.soil_moisture.toFixed(1)}%`;
+                    document.getElementById("brightness-display").innerText = `${data.brightness ? data.brightness.toFixed(1) : "--"}%`;
+                } else{
+                    console.error("❌ Error: No valid data received");
                 }
 
-                console.log("Sensor Data:", data);
-
-                const labels = data.map(d => d.time);
-                const airHumidity = data.map(d => d.air_humidity);
-                const soilHumidity = data.map(d => d.soil_humidity);
-                const brightness = data[0].brightness;
-                const waterLevel = data[0].water_level || "--";
-                
-                document.getElementById("brightnessValue").textContent = brightness + "%";
-                document.getElementById("waterLevel").textContent = waterLevel + "%";
-                document.getElementById("currentTime").textContent = new Date().toLocaleString();
-
-                const airCtx = document.getElementById("airHumidityChart").getContext("2d");
-                new Chart(airCtx, {
-                    type: "line",
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: "Air Humidity",
-                            data: airHumidity,
-                            borderColor: "blue",
-                            fill: false
-                        }]
-                    }
-                });
-
-                const soilCtx = document.getElementById("soilHumidityChart").getContext("2d");
-                new Chart(soilCtx, {
-                    type: "line",
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: "Soil Humidity",
-                            data: soilHumidity,
-                            borderColor: "green",
-                            fill: false
-                        }]
-                    }
-                });
             } catch (error) {
                 console.error("Error fetching sensor data:", error);
             }
         }
 
+        // ✅ Update Chart Data
+        function updateChart(chart, labels, data) {
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data;
+            chart.update();
+        }
+
+        // ✅ Brightness Control
+        function updateBrightness(value) {
+            document.getElementById("brightness-value").textContent = value + "%";
+
+            fetch("/set-brightness", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ brightness: parseInt(value) })
+            })
+            .then(response => response.text())
+            .then(data => console.log("Brightness updated:", data))
+            .catch(error => console.error("Error updating brightness:", error));
+        }
+
+        // ✅ Water Pump Toggle
+        function togglePump() {
+            let status = document.getElementById("pump-status").innerText;
+            let newStatus = status === "OFF" ? "ON" : "OFF";
+            document.getElementById("pump-status").innerText = newStatus;
+        }
+
+        // ✅ Auto-refresh data every 5 seconds
+        setInterval(fetchSensorData, 5000);
         fetchSensorData();
-        setInterval(fetchSensorData, 10000); // Refresh every 10 seconds
     </script>
 </body>
 </html>
