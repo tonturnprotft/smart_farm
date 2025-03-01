@@ -1,60 +1,119 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"machine"
-	"time"
-	"tinygo.org/x/drivers/dht"
+    "fmt"
+    "machine"
+    "strings"
+    "time"
+    "tinygo.org/x/drivers/dht"
 )
 
+// โครงสร้างข้อมูลเซ็นเซอร์ (ส่งออกเป็น JSON)
 type SensorData struct {
-	Temperature  float64 `json:"temperature"`
-	Humidity     float64 `json:"humidity"`
-	SoilMoisture float64 `json:"soil_moisture"`
+    Temperature  float64 `json:"temperature"`
+    Humidity     float64 `json:"humidity"`
+    SoilMoisture float64 `json:"soil_moisture"`
+    PumpStatus   bool    `json:"pump_status"`
 }
 
+var (
+    serial = machine.Serial
+    relay1 = machine.GP3
+    relay2 = machine.GP4
+
+    pumpOn bool
+)
+
 func main() {
-	fmt.Println("🚀 Smart Farm Sensors: Starting up...")
+    fmt.Println("🚀 Pico: Start program")
 
-	// ✅ Initialize Sensors
-	time.Sleep(2 * time.Second)
-	dhtSensor := dht.New(machine.GP2, dht.DHT22)
-	machine.InitADC()
-	adc := machine.ADC{Pin: machine.GP27}
-	adc.Configure(machine.ADCConfig{})
+    // ตั้งค่า Serial
+    serial.Configure(machine.UARTConfig{BaudRate: 115200})
 
-	fmt.Println("✅ Sensors Initialized!")
+    // ตั้งค่า Relay Pins
+    relay1.Configure(machine.PinConfig{Mode: machine.PinOutput})
+    relay2.Configure(machine.PinConfig{Mode: machine.PinOutput})
+    relay1.High() // ปิดปั๊ม
+    relay2.High()
+    pumpOn = false
 
-	for {
-		// ✅ Read Soil Moisture
-		soilRaw := adc.Get()
-		soilVoltage := float32(soilRaw) * 3.3 / 65535.0
-		soilMoisture := 100 - ((soilVoltage / 3.3) * 100)
+    // ตั้งค่า Sensor
+    dhtSensor := dht.New(machine.GP2, dht.DHT22)
+    machine.InitADC()
+    adc := machine.ADC{Pin: machine.GP27}
+    adc.Configure(machine.ADCConfig{})
 
-		// ✅ Read Temperature & Humidity
-		temp, hum, err := dhtSensor.Measurements()
-		if err != nil {
-			fmt.Println("❌ Error reading DHT22:", err)
-			continue
-		}
+    for {
+        // อ่านเซ็นเซอร์ (mock)
+        temp, hum, err := dhtSensor.Measurements()
+        if err != nil {
+            // ถ้าอ่านไม่ได้ก็ข้าม
+        }
+        soilRaw := adc.Get()
+        soilMoisture := 100 - ((float32(soilRaw) / 65535) * 100)
 
-		// ✅ Format Data as JSON
-		data := SensorData{
-			Temperature:  float64(temp) / 10.0,
-			Humidity:     float64(hum) / 10.0,
-			SoilMoisture: float64(soilMoisture),
-		}
+        // ส่งข้อมูลเซ็นเซอร์เป็น JSON ทาง Serial
+        data := SensorData{
+            Temperature:  float64(temp) / 10,
+            Humidity:     float64(hum) / 10,
+            SoilMoisture: float64(soilMoisture),
+            PumpStatus:   pumpOn,
+        }
+        js := toJSON(data)
+        fmt.Println(js) // พิมพ์ออกทาง Serial
 
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			fmt.Println("❌ JSON Encoding Error:", err)
-			continue
-		}
+        // ถ้ามีคำสั่งจาก Server → อ่าน
+        if serial.Buffered() > 0 {
+            cmd := readLine()
+            cmd = strings.TrimSpace(cmd)
+            fmt.Printf("[DEBUG] Received cmd = %q\n", cmd)
+            if cmd == "on" {
+                fmt.Println("[DEBUG] Cmd == on → relay1.Low()")
+                relay1.Low()
+                relay2.Low()
+                pumpOn = true
+                serial.Write([]byte("ACK: Pump ON\n"))
+            } else if cmd == "off" {
+                fmt.Println("[DEBUG] Cmd == off → relay1.High()")
+                relay1.High()
+                relay2.High()
+                pumpOn = false
+                serial.Write([]byte("ACK: Pump OFF\n"))
+            } else {
+                serial.Write([]byte("ERR: Unknown\n"))
+            }
+        }
 
-		// ✅ Print Data to Serial (MacBook `server.go` will read this)
-		fmt.Println(string(jsonData))
+        time.Sleep(500 * time.Millisecond)
+    }
+}
 
-		time.Sleep(5 * time.Second)
-	}
+// ฟังก์ชันแปลง struct → JSON (เล็กๆ)
+func toJSON(d SensorData) string {
+    return fmt.Sprintf(`{"temperature":%.1f,"humidity":%.1f,"soil_moisture":%.1f,"pump_status":%t}`,
+        d.Temperature, d.Humidity, d.SoilMoisture, d.PumpStatus)
+}
+
+// อ่านทีละไบต์จนเจอ '\n'
+func readLine() string {
+    buf := make([]byte, 32)
+    i := 0
+    for {
+        if serial.Buffered() == 0 {
+            time.Sleep(10 * time.Millisecond)
+            if serial.Buffered() == 0 {
+                break
+            }
+        }
+        b, err := serial.ReadByte()
+        if err != nil {
+            break
+        }
+        if b == '\n' || i >= len(buf)-1 {
+            break
+        }
+        buf[i] = b
+        i++
+    }
+    return string(buf[:i])
 }
