@@ -3,13 +3,18 @@ package main
 import (
     "fmt"
     "machine"
+    "math"
     "strconv"
     "strings"
     "time"
 
     "tinygo.org/x/drivers/dht"
 )
-
+const(
+    tempThreshold = 0.2
+    humThreshold = 0.5
+    soilThreshold = 1.0
+)
 // โครงสร้างข้อมูลเซ็นเซอร์ (ส่งออกเป็น JSON)
 type SensorData struct {
     Temperature  float64 `json:"temperature"`
@@ -99,10 +104,14 @@ func main() {
     fmt.Println("✅ PWM on GPIO13,14,15 = 0% initially")
 
     // ตั้งค่า Sensor
-    dhtSensor := dht.New(machine.GP2, dht.DHT22)
+    dhtSensor := dht.New(machine.GP16, dht.DHT22)
     machine.InitADC()
     adc := machine.ADC{Pin: machine.GP27}
     adc.Configure(machine.ADCConfig{})
+
+    // เพิ่มตัวแปรสำหรับวิธีที่ 2
+    var lastTemp, lastHum, lastSoil float64
+    var firstReading = true
 
     for {
         // อ่านเซ็นเซอร์
@@ -113,15 +122,41 @@ func main() {
         soilRaw := adc.Get()
         soilMoisture := 100 - ((float32(soilRaw) / 65535) * 100)
 
-        // ส่งข้อมูลเซ็นเซอร์เป็น JSON ทาง Serial
+        // แปลงเป็น float64
+        newTemp := float64(temp) / 10.0
+        newHum  := float64(hum) / 10.0
+        newSoil := float64(soilMoisture)
+
+        // เตรียม struct
         data := SensorData{
-            Temperature:  float64(temp) / 10,
-            Humidity:     float64(hum) / 10,
-            SoilMoisture: float64(soilMoisture),
+            Temperature:  newTemp,
+            Humidity:     newHum,
+            SoilMoisture: newSoil,
             PumpStatus:   pumpOn,
         }
-        js := toJSON(data)
-        fmt.Println(js)
+
+        // ใช้วิธีที่ 2: ส่งเฉพาะเมื่อเปลี่ยนเกิน threshold
+        if firstReading {
+            // ครั้งแรกส่งเสมอ
+            fmt.Println(toJSON(data))
+            lastTemp = newTemp
+            lastHum  = newHum
+            lastSoil = newSoil
+            firstReading = false
+        } else {
+            // ตรวจว่ามีค่าใดเปลี่ยนเกิน threshold?
+            tempChanged := changedBeyondThreshold(lastTemp, newTemp, tempThreshold)
+            humChanged  := changedBeyondThreshold(lastHum,  newHum,  humThreshold)
+            soilChanged := changedBeyondThreshold(lastSoil, newSoil, soilThreshold)
+
+            if tempChanged || humChanged || soilChanged {
+                fmt.Println(toJSON(data))
+                // อัปเดต last*
+                lastTemp = newTemp
+                lastHum  = newHum
+                lastSoil = newSoil
+            }
+        }
 
         // ถ้ามีคำสั่งจาก Serial
         if serial.Buffered() > 0 {
@@ -207,7 +242,9 @@ func main() {
         time.Sleep(500 * time.Millisecond)
     }
 }
-
+func changedBeyondThreshold(oldVal, newVal, threshold float64) bool {
+    return math.Abs(newVal -oldVal)> threshold
+}
 // ฟังก์ชันแปลง struct → JSON (เรียบง่าย)
 func toJSON(d SensorData) string {
     return fmt.Sprintf(`{"temperature":%.1f,"humidity":%.1f,"soil_moisture":%.1f,"pump_status":%t}`,

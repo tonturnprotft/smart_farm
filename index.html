@@ -1,16 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Farm Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- ✅ Load Chart.js -->
+    <title>Smart Farm</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
             background-color: #f4f4f4;
             text-align: center;
         }
+
+        h1 {
+            font-size: 48px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
         .container {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -19,145 +27,194 @@
             align-items: center;
             padding: 20px;
         }
+
         .box {
             background-color: #222;
             color: white;
             padding: 20px;
             border-radius: 10px;
+            height: 150px;
             text-align: center;
         }
+
         .large-box {
             grid-column: span 3;
+            height: 600px;
         }
+
         .chart-container {
-            width: 100%;
-            max-width: 600px;
+            width: 80%;
+            min-height: 400px;
             margin: auto;
+            background-color: #222;
+            padding: 20px;
+            border-radius: 10px;
         }
-        .slider-container {
+
+        #day-count {
+            font-size: 72px;
+            font-weight: bold;
+        }
+
+        .button {
+            margin-top: 10px;
+            padding: 15px 25px;
+            font-size: 18px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .button:hover {
+            background-color: #45a049;
+        }
+
+        #moisture-emoji {
+            font-size: 48px;
+            display: block;
             margin-top: 20px;
-        }
-        .slider {
-            width: 300px;
         }
     </style>
 </head>
-<body>
-    <h1>🌱 Smart Farm Dashboard</h1>
 
+<body>
+    <h1>SMART FARM</h1>
     <div class="container">
         <div class="box large-box">
             <h2>DAY</h2>
             <h1 id="day-count">0</h1>
             <p id="datetime"></p>
+            <button class="button" onclick="startDayCount()">Start Days</button>
+            <button class="button" onclick="resetDayCount()">Reset Days</button>
+            <span id="moisture-emoji">☹️</span>
         </div>
         <div class="box">
-            <h2>TEMPERATURE</h2>
-            <h1 id="temperature-display">--°C</h1>
+            <h2>HUMIDITY</h2>
+            <h1 id="humidity-value">20%</h1>
         </div>
         <div class="box">
-            <h2>WATER-PUMP</h2>
-            <button onclick="togglePump()" id="pump-button">Toggle</button>
-            <p id="pump-status">OFF</p>
-        </div>
-        <div class="box">
-            <h2>AIR HUMIDITY</h2>
-            <h1 id="humidity-display">--%</h1>
+            <h2>OUTSIDE-TEMP</h2>
+            <!-- เพิ่ม id เพื่ออัพเดตค่า temperature -->
+            <h1 id="temp-value">31.2°</h1>
         </div>
         <div class="box">
             <h2>SOIL MOISTURE</h2>
-            <h1 id="soil-moisture-display">--%</h1>
+            <h1 id="moisture-value">20%</h1>
         </div>
-        <div class="box">
-            <h2>BRIGHTNESS</h2>
-            <h1 id="brightness-display">--%</h1>
+        <div class="box large-box">
+            <h2>SOIL MOISTURE vs TIMES</h2>
+            <div class="chart-container">
+                <canvas id="moistureChart"></canvas>
+            </div>
         </div>
     </div>
-
-    <!-- ✅ Charts Section -->
-    <h2>📊 Sensor Data Over Time</h2>
-    <div class="chart-container"><canvas id="airHumidityChart"></canvas></div>
-    <div class="chart-container"><canvas id="soilHumidityChart"></canvas></div>
-    <div class="chart-container"><canvas id="brightnessChart"></canvas></div>
-
-    <!-- ✅ Brightness Control Slider -->
-    <div class="slider-container">
-        <h2>💡 Set Brightness</h2>
-        <input type="range" id="brightness-slider" class="slider" min="0" max="100" value="50" oninput="updateBrightness(this.value)">
-        <p>Brightness: <span id="brightness-value">50%</span></p>
-    </div>
-
     <script>
-        // ✅ Initialize Charts
-        const airHumidityChart = new Chart(document.getElementById("airHumidityChart"), {
-            type: "line",
-            data: { labels: [], datasets: [{ label: "Air Humidity (%)", data: [], borderColor: "blue", fill: false }] }
+        function updateDateTime() {
+            const now = new Date();
+            const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+            const day = days[now.getDay()];
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            document.getElementById("datetime").innerText = `${day} : ${hours}:${minutes}`;
+        }
+
+        function updateDayCount() {
+            const dayCount = localStorage.getItem("dayCount") || 0;
+            document.getElementById("day-count").innerText = dayCount;
+        }
+
+        function startDayCount() {
+            localStorage.setItem("dayCount", 1);
+            updateDayCount();
+            alert("Day count started successfully!");
+        }
+
+        function resetDayCount() {
+            localStorage.setItem("dayCount", 0);
+            updateDayCount();
+        }
+
+        function updateMoistureEmoji() {
+            const moistureText = document.getElementById("moisture-value").innerText;
+            const moisture = parseInt(moistureText);
+            document.getElementById("moisture-emoji").innerText = moisture >= 30 ? "😊" : "☹️";
+        }
+
+        const ctx = document.getElementById('moistureChart').getContext('2d');
+        const moistureChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Soil Moisture',
+                    data: [],
+                    borderColor: '#4CAF50',
+                    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        title: {
+                            display: true, text: 'Time', color: 'white'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true, text: 'Moisture (%)', color: 'white'
+                        },
+                        beginAtZero: true
+                    }
+                }
+            }
         });
 
-        const soilHumidityChart = new Chart(document.getElementById("soilHumidityChart"), {
-            type: "line",
-            data: { labels: [], datasets: [{ label: "Soil Moisture (%)", data: [], borderColor: "green", fill: false }] }
-        });
-
-        const brightnessChart = new Chart(document.getElementById("brightnessChart"), {
-            type: "line",
-            data: { labels: [], datasets: [{ label: "Brightness (%)", data: [], borderColor: "orange", fill: false }] }
-        });
-
-        // ✅ Fetch Sensor Data from Server
-        async function fetchSensorData() {
+        // เรียก server เพื่ออัปเดต moisture/humidity/temperature
+        async function updateMoisture() {
             try {
-                const response = await fetch(`/sensor-data?timestamp=${new Date().getTime()}`);
-                if (!response.ok){
-                    throw new Error(`HTTP error! Statis: ${response.status}`);
+                const response = await fetch("http://localhost:8080/sensor-data");
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
-                console.log("📡 Fetched Sensor Data:", data);
-                if (data && data.temperature !== undefined) {
-                    document.getElementById("temperature-display").innerText = `${data.temperature.toFixed(1)}°C`;
-                    document.getElementById("humidity-display").innerText = `${data.humidity.toFixed(1)}%`;
-                    document.getElementById("soil-moisture-display").innerText = `${data.soil_moisture.toFixed(1)}%`;
-                    document.getElementById("brightness-display").innerText = `${data.brightness ? data.brightness.toFixed(1) : "--"}%`;
-                } else{
-                    console.error("❌ Error: No valid data received");
-                }
+                console.log("Sensor data from server:", data);
 
-            } catch (error) {
-                console.error("Error fetching sensor data:", error);
+                // data => { temperature, humidity, soil_moisture }
+                const moisture = data.soil_moisture || 0;
+                const hum = data.humidity || 0;
+                const temp = data.temperature || 0;
+
+                // อัปเดตค่าบนหน้าจอ
+                document.getElementById("moisture-value").innerText = moisture.toFixed(1) + "%";
+                document.getElementById("humidity-value").innerText = hum.toFixed(1) + "%";
+                // update temp-value:
+                document.getElementById("temp-value").innerText = temp.toFixed(1) + "°";
+
+                // อัปเดต Chart
+                const currentTime = new Date().toLocaleTimeString();
+                moistureChart.data.labels.push(currentTime);
+                moistureChart.data.datasets[0].data.push(moisture);
+
+                if (moistureChart.data.labels.length > 20) {
+                    moistureChart.data.labels.shift();
+                    moistureChart.data.datasets[0].data.shift();
+                }
+                moistureChart.update();
+                updateMoistureEmoji();
+            } catch (err) {
+                console.error("Error fetching sensor data:", err);
             }
         }
 
-        // ✅ Update Chart Data
-        function updateChart(chart, labels, data) {
-            chart.data.labels = labels;
-            chart.data.datasets[0].data = data;
-            chart.update();
-        }
+        // Interval เรียกฟังก์ชัน
+        setInterval(updateMoisture, 3000);
+        updateMoisture(); // เรียกครั้งแรกทันที
 
-        // ✅ Brightness Control
-        function updateBrightness(value) {
-            document.getElementById("brightness-value").textContent = value + "%";
-
-            fetch("/set-brightness", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ brightness: parseInt(value) })
-            })
-            .then(response => response.text())
-            .then(data => console.log("Brightness updated:", data))
-            .catch(error => console.error("Error updating brightness:", error));
-        }
-
-        // ✅ Water Pump Toggle
-        function togglePump() {
-            let status = document.getElementById("pump-status").innerText;
-            let newStatus = status === "OFF" ? "ON" : "OFF";
-            document.getElementById("pump-status").innerText = newStatus;
-        }
-
-        // ✅ Auto-refresh data every 5 seconds
-        setInterval(fetchSensorData, 5000);
-        fetchSensorData();
     </script>
 </body>
 </html>
