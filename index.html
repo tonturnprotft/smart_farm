@@ -1,220 +1,87 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Farm</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            text-align: center;
-        }
-
-        h1 {
-            font-size: 48px;
-            font-weight: bold;
-            text-transform: uppercase;
-        }
-
-        .container {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .box {
-            background-color: #222;
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            height: 150px;
-            text-align: center;
-        }
-
-        .large-box {
-            grid-column: span 3;
-            height: 600px;
-        }
-
-        .chart-container {
-            width: 80%;
-            min-height: 400px;
-            margin: auto;
-            background-color: #222;
-            padding: 20px;
-            border-radius: 10px;
-        }
-
-        #day-count {
-            font-size: 72px;
-            font-weight: bold;
-        }
-
-        .button {
-            margin-top: 10px;
-            padding: 15px 25px;
-            font-size: 18px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-
-        .button:hover {
-            background-color: #45a049;
-        }
-
-        #moisture-emoji {
-            font-size: 48px;
-            display: block;
-            margin-top: 20px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Farm</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" type="text/css" href="styles.css">
 </head>
 
 <body>
-    <h1>SMART FARM</h1>
-    <div class="container">
-        <div class="box large-box">
-            <h2>DAY</h2>
-            <h1 id="day-count">0</h1>
-            <p id="datetime"></p>
-            <button class="button" onclick="startDayCount()">Start Days</button>
-            <button class="button" onclick="resetDayCount()">Reset Days</button>
-            <span id="moisture-emoji">☹️</span>
+  <h1>SMART FARM</h1>
+  <div class="container">
+
+    <div class="box large-box">
+      <h2>DAY</h2>
+      <h1 id="day-count">0</h1>
+      <p id="datetime"></p>
+      <button class="button" onclick="startDayCount()">Start Days</button>
+      <button class="button" onclick="resetDayCount()">Reset Days</button>
+      <span id="moisture-emoji">☹️</span>
+      <div class="led-container">
+        <div class="led-charts">
+          <div class="led-chart-container">
+            <h3 id="led1-percent">--%</h3>
+            <canvas id="ledChart1"></canvas>
+            <p>LED1</p>
+          </div>
+          <div class="led-chart-container">
+            <h3 id="led2-percent">--%</h3>
+            <canvas id="ledChart2"></canvas>
+            <p>LED2</p>
+          </div>
+          <div class="led-chart-container">
+            <h3 id="led3-percent">--%</h3>
+            <canvas id="ledChart3"></canvas>
+            <p>LED3</p>
+          </div>
         </div>
-        <div class="box">
-            <h2>HUMIDITY</h2>
-            <h1 id="humidity-value">20%</h1>
-        </div>
-        <div class="box">
-            <h2>OUTSIDE-TEMP</h2>
-            <!-- เพิ่ม id เพื่ออัพเดตค่า temperature -->
-            <h1 id="temp-value">31.2°</h1>
-        </div>
-        <div class="box">
-            <h2>SOIL MOISTURE</h2>
-            <h1 id="moisture-value">20%</h1>
-        </div>
-        <div class="box large-box">
-            <h2>SOIL MOISTURE vs TIMES</h2>
-            <div class="chart-container">
-                <canvas id="moistureChart"></canvas>
-            </div>
-        </div>
+      </div>
     </div>
-    <script>
-        function updateDateTime() {
-            const now = new Date();
-            const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-            const day = days[now.getDay()];
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            document.getElementById("datetime").innerText = `${day} : ${hours}:${minutes}`;
-        }
 
-        function updateDayCount() {
-            const dayCount = localStorage.getItem("dayCount") || 0;
-            document.getElementById("day-count").innerText = dayCount;
-        }
+    <div class="box">
+      <h2>HUMIDITY_1</h2>
+      <h1 id="humidity1-value">--%</h1>
+    </div>
+    <div class="box">
+      <h2>OUTSIDE-TEMP_1</h2>
+      <h1 id="temp1-value">--°</h1>
+    </div>
+    <div class="box">
+      <h2>SOIL MOISTURE</h2>
+      <h1 id="moisture-value">--%</h1>
+    </div>
+    <div class="box">
+      <h2>HUMIDITY_2</h2>
+      <h1 id="humidity2-value">--%</h1>
+    </div>
+    <div class="box">
+      <h2>OUTSIDE-TEMP_2</h2>
+      <h1 id="temp2-value">--°</h1>
+    </div>
+    <div class="box">
+      <h2>WATER-PUMP</h2>
+      <button class="toggle disabled" id="pump-toggle" disabled>
+        <span id="pump-status">OFF</span>
+      </button>
+    </div>
 
-        function startDayCount() {
-            localStorage.setItem("dayCount", 1);
-            updateDayCount();
-            alert("Day count started successfully!");
-        }
+    <div class="box large-box">
+      <h2>SOIL MOISTURE vs TIMES</h2>
+      <div class="dropdown">
+        <label for="timeRange">เลือกช่วงเวลา: </label>
+        <select id="timeRange" onchange="updateGraph()">
+          <option value="1">1 นาทีล่าสุด</option>
+          <option value="5">5 นาทีล่าสุด</option>
+        </select>
+      </div>
+      <div class="chart-container">
+        <canvas id="moistureChart"></canvas>
+      </div>
+    </div>
+  </div>
 
-        function resetDayCount() {
-            localStorage.setItem("dayCount", 0);
-            updateDayCount();
-        }
-
-        function updateMoistureEmoji() {
-            const moistureText = document.getElementById("moisture-value").innerText;
-            const moisture = parseInt(moistureText);
-            document.getElementById("moisture-emoji").innerText = moisture >= 30 ? "😊" : "☹️";
-        }
-
-        const ctx = document.getElementById('moistureChart').getContext('2d');
-        const moistureChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Soil Moisture',
-                    data: [],
-                    borderColor: '#4CAF50',
-                    backgroundColor: 'rgba(76, 175, 80, 0.2)',
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: {
-                        title: {
-                            display: true, text: 'Time', color: 'white'
-                        }
-                    },
-                    y: {
-                        title: {
-                            display: true, text: 'Moisture (%)', color: 'white'
-                        },
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-
-        // เรียก server เพื่ออัปเดต moisture/humidity/temperature
-        async function updateMoisture() {
-            try {
-                const response = await fetch("http://localhost:8080/sensor-data");
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                console.log("Sensor data from server:", data);
-
-                // data => { temperature, humidity, soil_moisture }
-                const moisture = data.soil_moisture || 0;
-                const hum = data.humidity || 0;
-                const temp = data.temperature || 0;
-
-                // อัปเดตค่าบนหน้าจอ
-                document.getElementById("moisture-value").innerText = moisture.toFixed(1) + "%";
-                document.getElementById("humidity-value").innerText = hum.toFixed(1) + "%";
-                // update temp-value:
-                document.getElementById("temp-value").innerText = temp.toFixed(1) + "°";
-
-                // อัปเดต Chart
-                const currentTime = new Date().toLocaleTimeString();
-                moistureChart.data.labels.push(currentTime);
-                moistureChart.data.datasets[0].data.push(moisture);
-
-                if (moistureChart.data.labels.length > 20) {
-                    moistureChart.data.labels.shift();
-                    moistureChart.data.datasets[0].data.shift();
-                }
-                moistureChart.update();
-                updateMoistureEmoji();
-            } catch (err) {
-                console.error("Error fetching sensor data:", err);
-            }
-        }
-
-        // Interval เรียกฟังก์ชัน
-        setInterval(updateMoisture, 3000);
-        updateMoisture(); // เรียกครั้งแรกทันที
-
-    </script>
+  <script src="script.js"></script>
 </body>
 </html>

@@ -10,18 +10,17 @@ import (
 
     "tinygo.org/x/drivers/dht"
 )
-const(
+
+// Threshold สำหรับส่งข้อมูลเมื่อเปลี่ยนเกินค่านี้
+const (
     tempThreshold = 0.2
-    humThreshold = 0.5
+    humThreshold  = 0.5
     soilThreshold = 1.0
 )
-// โครงสร้างข้อมูลเซ็นเซอร์ (ส่งออกเป็น JSON)
-type SensorData struct {
-    Temperature  float64 `json:"temperature"`
-    Humidity     float64 `json:"humidity"`
-    SoilMoisture float64 `json:"soil_moisture"`
-    PumpStatus   bool    `json:"pump_status"`
-}
+
+// โครงสร้างสำหรับส่ง JSON 2 แบบ
+// - toJSONAir =>  {\"type\":\"air\",\"air_id\":...,\"temp\":...,\"air_humidity\":...,\"pump_status\":bool}
+// - toJSONSoil => {\"type\":\"soil\",\"soil_id\":...,\"soil_humidity\":...,\"pump_status\":bool}
 
 var (
     // Serial & Pump
@@ -33,12 +32,11 @@ var (
     // ความถี่ PWM (1 kHz)
     freqHz = uint64(1000)
 
-    // PWM A = GPIO13 (slice6)
+    // PWM สำหรับไฟ: สมมติ Outer1=GPIO13, Outer2=GPIO14, Inner=GPIO15
     pwmA  = machine.PWM6
     pinA  = machine.GPIO13
     chA   uint8
 
-    // PWM B/C = GPIO14, GPIO15 (slice7)
     pwmB = machine.PWM7
     pinB = machine.GPIO14
     chB  uint8
@@ -46,14 +44,14 @@ var (
     pinC = machine.GPIO15
     chC  uint8
 
-    // หากอยากเก็บ brightness แยก
     lightDuty13 uint32
     lightDuty14 uint32
     lightDuty15 uint32
 )
 
+// =============== MAIN LOOP ===============
 func main() {
-    fmt.Println("🚀 Pico: Separate PWM Control for GPIO13,14,15")
+    fmt.Println("🚀 Pico multi-sensor: Air & Soil, separate JSON")
 
     // ตั้งค่า Serial
     serial.Configure(machine.UARTConfig{BaudRate: 115200})
@@ -61,31 +59,30 @@ func main() {
     // ตั้งค่า Pump (Relay)
     relay1.Configure(machine.PinConfig{Mode: machine.PinOutput})
     relay2.Configure(machine.PinConfig{Mode: machine.PinOutput})
-    relay1.High() // ปิดปั๊ม
+    relay1.High()
     relay2.High()
     pumpOn = false
 
-    // ตั้งค่า PWM A: GPIO13
+    // ตั้งค่า PWM
     period := uint64(1e9 / freqHz)
     if err := pwmA.Configure(machine.PWMConfig{Period: period}); err != nil {
-        fmt.Printf("❌ PWM6 (GPIO13) configure error: %v\n", err)
+        fmt.Printf("❌ PWM6 (GPIO13) error: %v\n", err)
     }
     aCh, errA := pwmA.Channel(pinA)
     if errA != nil {
-        fmt.Printf("❌ PWM6 channel A error (GPIO13): %v\n", errA)
+        fmt.Printf("❌ channel A (GPIO13) error: %v\n", errA)
     }
     pinA.Configure(machine.PinConfig{Mode: machine.PinPWM})
     chA = aCh
     pwmA.Set(chA, 0)
     lightDuty13 = 0
 
-    // ตั้งค่า PWM B/C: GPIO14,15
     if err := pwmB.Configure(machine.PWMConfig{Period: period}); err != nil {
-        fmt.Printf("❌ PWM7 configure error: %v\n", err)
+        fmt.Printf("❌ PWM7 error: %v\n", err)
     }
     bCh, errB := pwmB.Channel(pinB)
     if errB != nil {
-        fmt.Printf("❌ PWM7 channel B error (GPIO14): %v\n", errB)
+        fmt.Printf("❌ channel B (GPIO14) error: %v\n", errB)
     }
     pinB.Configure(machine.PinConfig{Mode: machine.PinPWM})
     chB = bCh
@@ -94,7 +91,7 @@ func main() {
 
     cCh, errC := pwmB.Channel(pinC)
     if errC != nil {
-        fmt.Printf("❌ PWM7 channel C error (GPIO15): %v\n", errC)
+        fmt.Printf("❌ channel C (GPIO15) error: %v\n", errC)
     }
     pinC.Configure(machine.PinConfig{Mode: machine.PinPWM})
     chC = cCh
@@ -103,57 +100,49 @@ func main() {
 
     fmt.Println("✅ PWM on GPIO13,14,15 = 0% initially")
 
-    // ตั้งค่า Sensor
-    dhtSensor := dht.New(machine.GP16, dht.DHT22)
+    // ตั้งค่าเซ็นเซอร์: DHT22 => Air, ADC => Soil
+    dhtSensor := dht.New(machine.GP16, dht.DHT22) // สมมติ GP16
     machine.InitADC()
     adc := machine.ADC{Pin: machine.GP27}
     adc.Configure(machine.ADCConfig{})
 
-    // เพิ่มตัวแปรสำหรับวิธีที่ 2
     var lastTemp, lastHum, lastSoil float64
-    var firstReading = true
+    firstReading := true
 
     for {
-        // อ่านเซ็นเซอร์
-        temp, hum, err := dhtSensor.Measurements()
-        if err != nil {
-            // อ่านไม่ได้ก็ข้าม
+        // อ่าน DHT
+        tRaw, hRaw, dhtErr := dhtSensor.Measurements()
+        if dhtErr != nil {
+            // ถ้า error ก็ข้าม
         }
+        newTemp := float64(tRaw) / 10.0
+        newHum  := float64(hRaw) / 10.0
+
+        // อ่าน Soil
         soilRaw := adc.Get()
-        soilMoisture := 100 - ((float32(soilRaw) / 65535) * 100)
+        newSoil := float64(100 - ((float32(soilRaw) / 65535) * 100))
 
-        // แปลงเป็น float64
-        newTemp := float64(temp) / 10.0
-        newHum  := float64(hum) / 10.0
-        newSoil := float64(soilMoisture)
-
-        // เตรียม struct
-        data := SensorData{
-            Temperature:  newTemp,
-            Humidity:     newHum,
-            SoilMoisture: newSoil,
-            PumpStatus:   pumpOn,
-        }
-
-        // ใช้วิธีที่ 2: ส่งเฉพาะเมื่อเปลี่ยนเกิน threshold
         if firstReading {
-            // ครั้งแรกส่งเสมอ
-            fmt.Println(toJSON(data))
+            // ครั้งแรก ส่ง 2 JSON เลย
+            fmt.Println(toJSONAir(1, newTemp, newHum, pumpOn))
+            fmt.Println(toJSONSoil(1, newSoil, pumpOn))
             lastTemp = newTemp
             lastHum  = newHum
             lastSoil = newSoil
             firstReading = false
         } else {
-            // ตรวจว่ามีค่าใดเปลี่ยนเกิน threshold?
-            tempChanged := changedBeyondThreshold(lastTemp, newTemp, tempThreshold)
-            humChanged  := changedBeyondThreshold(lastHum,  newHum,  humThreshold)
+            // threshold แยก
+            airChanged  := changedBeyondThreshold(lastTemp, newTemp, tempThreshold) ||
+                          changedBeyondThreshold(lastHum,  newHum,  humThreshold)
             soilChanged := changedBeyondThreshold(lastSoil, newSoil, soilThreshold)
 
-            if tempChanged || humChanged || soilChanged {
-                fmt.Println(toJSON(data))
-                // อัปเดต last*
+            if airChanged {
+                fmt.Println(toJSONAir(1, newTemp, newHum, pumpOn))
                 lastTemp = newTemp
                 lastHum  = newHum
+            }
+            if soilChanged {
+                fmt.Println(toJSONSoil(1, newSoil, pumpOn))
                 lastSoil = newSoil
             }
         }
@@ -166,72 +155,50 @@ func main() {
 
             switch {
             case cmd == "on":
-                // ปั๊มน้ำ
-                fmt.Println("[DEBUG] Cmd == on → relay1.Low()")
+                fmt.Println("[DEBUG] relay1.Low() / relay2.Low() => Pump ON")
                 relay1.Low()
                 relay2.Low()
                 pumpOn = true
                 serial.Write([]byte("ACK: Pump ON\n"))
 
             case cmd == "off":
-                fmt.Println("[DEBUG] Cmd == off → relay1.High()")
+                fmt.Println("[DEBUG] relay1.High() / relay2.High() => Pump OFF")
                 relay1.High()
                 relay2.High()
                 pumpOn = false
                 serial.Write([]byte("ACK: Pump OFF\n"))
 
-            // light13:NN → GPIO13
             case strings.HasPrefix(cmd, "light13:"):
                 valStr := strings.TrimPrefix(cmd, "light13:")
-                valStr = strings.TrimSpace(valStr)
-                val, err := strconv.Atoi(valStr)
-                if err == nil {
-                    if val < 0 { val = 0 }
-                    if val > 100 { val = 100 }
-                    lightDuty13 = uint32(val)
+                val, e := strconv.Atoi(strings.TrimSpace(valStr))
+                if e == nil {
+                    lightDuty13 = clampValue(val)
                     dutyA := pwmA.Top() * lightDuty13 / 100
                     pwmA.Set(chA, dutyA)
-
                     ack := fmt.Sprintf("ACK: light13=%d\n", val)
                     serial.Write([]byte(ack))
-                } else {
-                    serial.Write([]byte("ERR: invalid brightness\n"))
                 }
 
-            // light14:NN → GPIO14
             case strings.HasPrefix(cmd, "light14:"):
                 valStr := strings.TrimPrefix(cmd, "light14:")
-                valStr = strings.TrimSpace(valStr)
-                val, err := strconv.Atoi(valStr)
-                if err == nil {
-                    if val < 0 { val = 0 }
-                    if val > 100 { val = 100 }
-                    lightDuty14 = uint32(val)
+                val, e := strconv.Atoi(strings.TrimSpace(valStr))
+                if e == nil {
+                    lightDuty14 = clampValue(val)
                     dutyB := pwmB.Top() * lightDuty14 / 100
                     pwmB.Set(chB, dutyB)
-
                     ack := fmt.Sprintf("ACK: light14=%d\n", val)
                     serial.Write([]byte(ack))
-                } else {
-                    serial.Write([]byte("ERR: invalid brightness\n"))
                 }
 
-            // light15:NN → GPIO15
             case strings.HasPrefix(cmd, "light15:"):
                 valStr := strings.TrimPrefix(cmd, "light15:")
-                valStr = strings.TrimSpace(valStr)
-                val, err := strconv.Atoi(valStr)
-                if err == nil {
-                    if val < 0 { val = 0 }
-                    if val > 100 { val = 100 }
-                    lightDuty15 = uint32(val)
+                val, e := strconv.Atoi(strings.TrimSpace(valStr))
+                if e == nil {
+                    lightDuty15 = clampValue(val)
                     dutyC := pwmB.Top() * lightDuty15 / 100
                     pwmB.Set(chC, dutyC)
-
                     ack := fmt.Sprintf("ACK: light15=%d\n", val)
                     serial.Write([]byte(ack))
-                } else {
-                    serial.Write([]byte("ERR: invalid brightness\n"))
                 }
 
             default:
@@ -242,16 +209,26 @@ func main() {
         time.Sleep(500 * time.Millisecond)
     }
 }
-func changedBeyondThreshold(oldVal, newVal, threshold float64) bool {
-    return math.Abs(newVal -oldVal)> threshold
-}
-// ฟังก์ชันแปลง struct → JSON (เรียบง่าย)
-func toJSON(d SensorData) string {
-    return fmt.Sprintf(`{"temperature":%.1f,"humidity":%.1f,"soil_moisture":%.1f,"pump_status":%t}`,
-        d.Temperature, d.Humidity, d.SoilMoisture, d.PumpStatus)
+
+// =============== ฟังก์ชัน JSON แยก ===============
+func toJSONAir(airID int, temp, hum float64, pumpStatus bool) string {
+    // type=air , air_id=??
+    return fmt.Sprintf(`{"type":"air","air_id":%d,"temp":%.1f,"air_humidity":%.1f,"pump_status":%t}`,
+        airID, temp, hum, pumpStatus)
 }
 
-// อ่านทีละไบต์จนเจอ '\n'
+func toJSONSoil(soilID int, soil float64, pumpStatus bool) string {
+    // type=soil , soil_id=??
+    return fmt.Sprintf(`{"type":"soil","soil_id":%d,"soil_humidity":%.1f,"pump_status":%t}`,
+        soilID, soil, pumpStatus)
+}
+
+// ตรวจ threshold
+func changedBeyondThreshold(oldVal, newVal, threshold float64) bool {
+    return math.Abs(newVal-oldVal) > threshold
+}
+
+// อ่านทีละไบต์จนเจอ '\\n'
 func readLine() string {
     buf := make([]byte, 32)
     i := 0
@@ -273,4 +250,13 @@ func readLine() string {
         i++
     }
     return string(buf[:i])
+}
+
+func clampValue(v int) uint32 {
+    if v < 0 {
+        return 0
+    } else if v > 100 {
+        return 100
+    }
+    return uint32(v)
 }
