@@ -27,11 +27,11 @@ The collected data is stored in a PostgreSQL database, displayed on a real-time 
 
 Component
 Description
-Programming -> Go (server-side), TinyGo (Microcontroller)
-Web Dashboard -> HTML, CSS, JavaScript (Chart.js)
-Desktop GUI -> Fyne (Go GUI framework)
-Database ->PostgreSQL
-Communication -> MQTT Protocol, Serial Communication
+Programming -> Go (server-side), TinyGo (Microcontroller),
+Web Dashboard -> HTML, CSS, JavaScript (Chart.js),
+Desktop GUI -> Fyne (Go GUI framework),
+Database ->PostgreSQL,
+Communication -> MQTT Protocol&Serial Communication,
 Web Server -> Gorilla Mux (Go Router)
 
 ⸻
